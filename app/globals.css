@@ -10,6 +10,37 @@
   --font-sans: var(--font-sans);
   --font-mono: var(--font-geist-mono);
   --font-heading: var(--font-sans);
+
+  /* Component category tokens from arduino_trainer_spec.md §498 */
+  --color-led: #e24b4a;
+  --color-led-foreground: #ffffff;
+  --color-resistor: #ba7517;
+  --color-resistor-foreground: #ffffff;
+  --color-sensor: #1d9e75;
+  --color-sensor-foreground: #ffffff;
+  --color-motor: #534ab7;
+  --color-motor-foreground: #ffffff;
+  --color-display: #378add;
+  --color-display-foreground: #ffffff;
+  --color-switch: #d85a30;
+  --color-switch-foreground: #ffffff;
+  --color-ic: #d4537e;
+  --color-ic-foreground: #ffffff;
+  --color-board: #5f5e5a;
+  --color-board-foreground: #ffffff;
+  --color-tool: #0f6e56;
+  --color-tool-foreground: #ffffff;
+  --color-wire: #185fa5;
+  --color-wire-foreground: #ffffff;
+
+  /* Safety warning tokens from spec §519 */
+  --color-danger: #b91c1c;
+  --color-danger-foreground: #ffffff;
+  --color-caution: #b45309;
+  --color-caution-foreground: #ffffff;
+  --color-info: #1d4ed8;
+  --color-info-foreground: #ffffff;
+
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
