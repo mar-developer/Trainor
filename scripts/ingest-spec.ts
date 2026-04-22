@@ -9,7 +9,9 @@ import { chunkMarkdown } from "../lib/rag/chunk";
 import { ingestDocument, supabaseFromEnv } from "../lib/rag/ingest";
 
 const SPEC_PATH = resolve(process.cwd(), "../docs/arduino_trainer_spec.md");
-const TITLE = "arduino_trainer_spec.md";
+// User-facing label for citations — the raw filename is an implementation
+// detail the learner doesn't need to see.
+const TITLE = "Arduino Curriculum Guide";
 
 async function main() {
   console.log(`Reading ${SPEC_PATH}`);

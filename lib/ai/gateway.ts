@@ -3,8 +3,11 @@
 // See https://vercel.com/docs/ai-gateway
 
 export const AI_MODELS = {
-  // Chat — Claude Opus 4.7 for grounded tutoring answers.
-  chat: "anthropic/claude-opus-4-7" as const,
+  // Chat — Claude Haiku 4.5: cheap, fast, free-tier-friendly, plenty smart
+  // for RAG-grounded tutoring. Bump to "anthropic/claude-sonnet-4-6" or
+  // "anthropic/claude-opus-4-7" when you want richer prose (both require
+  // paid gateway credits).
+  chat: "anthropic/claude-haiku-4-5" as const,
   // Embeddings — OpenAI text-embedding-3-small (1536-dim, cheap, fast).
   embedding: "openai/text-embedding-3-small" as const,
 } as const;

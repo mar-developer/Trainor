@@ -37,6 +37,9 @@ export async function POST(req: Request) {
     }
   }
 
+  // convertToModelMessages is async in AI SDK v6 (returns Promise<ModelMessage[]>).
+  const modelMessages = await convertToModelMessages(messages);
+
   const result = streamText({
     model: AI_MODELS.chat,
     system: TUTOR_SYSTEM_PROMPT,
@@ -45,7 +48,7 @@ export async function POST(req: Request) {
         role: "system",
         content: `CONTEXT (cite as [1]..[n] when used):\n\n${contextBlock}`,
       },
-      ...convertToModelMessages(messages),
+      ...modelMessages,
     ],
   });
 

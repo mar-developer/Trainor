@@ -36,10 +36,16 @@ export function CitationList({
             <span className="mt-0.5 font-mono text-info">[{c.index}]</span>
             <Icon className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
             <div className="min-w-0 flex-1">
-              <p className="truncate font-medium">{c.heading}</p>
-              <p className="truncate text-[0.7rem] text-muted-foreground">
-                {c.source}
-              </p>
+              {c.heading ? (
+                <>
+                  <p className="truncate font-medium">{c.heading}</p>
+                  <p className="truncate text-[0.7rem] text-muted-foreground">
+                    {c.source}
+                  </p>
+                </>
+              ) : (
+                <p className="truncate font-medium">{c.source}</p>
+              )}
             </div>
           </li>
         );

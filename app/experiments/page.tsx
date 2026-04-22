@@ -1,5 +1,6 @@
+import Link from "next/link";
 import { FlaskConical } from "lucide-react";
-import { NewExperimentDialog } from "@/components/new-experiment-dialog";
+import { buttonVariants } from "@/components/ui/button";
 import { getExperiments } from "@/lib/data/repo";
 
 export default async function ExperimentsPage() {
@@ -15,7 +16,9 @@ export default async function ExperimentsPage() {
             Circuits you designed without a tutorial
           </h1>
         </div>
-        <NewExperimentDialog />
+        <span className="text-xs text-muted-foreground">
+          Log new experiments from inside a course.
+        </span>
       </header>
 
       <div className="mx-auto w-full max-w-4xl space-y-4 px-4 py-6 sm:px-6">
@@ -37,12 +40,25 @@ export default async function ExperimentsPage() {
                   <FlaskConical className="size-5" />
                 </div>
                 <div className="flex-1 space-y-1">
-                  <div className="flex items-center justify-between">
-                    <h2 className="font-semibold">{e.title}</h2>
-                    <time className="text-xs text-muted-foreground">
+                  <div className="flex items-center justify-between gap-2">
+                    <h2 className="truncate font-semibold">{e.title}</h2>
+                    <time className="shrink-0 text-xs text-muted-foreground">
                       {e.createdAt}
                     </time>
                   </div>
+                  {e.courseTitle && e.courseSlug && (
+                    <Link
+                      href={`/courses/${e.courseSlug}`}
+                      className={buttonVariants({
+                        variant: "ghost",
+                        size: "sm",
+                      })
+                        .concat(" !h-6 gap-1.5 !px-2 !text-[0.7rem]")}
+                    >
+                      <span className="size-1.5 rounded-full bg-sensor" />
+                      {e.courseTitle}
+                    </Link>
+                  )}
                   <p className="text-sm text-muted-foreground">
                     {e.observation}
                   </p>

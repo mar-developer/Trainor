@@ -18,7 +18,12 @@ import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { createExperiment } from "@/app/actions/experiments";
 
-export function NewExperimentDialog() {
+export function NewExperimentDialog({
+  courseSlug,
+}: {
+  /** Which course this experiment belongs to. Required. */
+  courseSlug: string;
+}) {
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [circuit, setCircuit] = useState("");
@@ -39,6 +44,7 @@ export function NewExperimentDialog() {
     startTransition(async () => {
       try {
         await createExperiment({
+          courseSlug,
           title: title.trim(),
           circuitDescription: circuit.trim() || undefined,
           observation: observation.trim(),

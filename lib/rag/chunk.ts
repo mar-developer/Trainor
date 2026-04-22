@@ -28,8 +28,11 @@ export function chunkMarkdown(md: string, rootTitle: string): Chunk[] {
   };
 
   for (const line of lines) {
-    const h2 = line.match(/^##\s+(.+)$/);
-    const h3 = line.match(/^###\s+(.+)$/);
+    // Recognize both markdown (##, ###) and AsciiDoc (==, ===) heading syntax.
+    // AsciiDoc's `=` is the document title (equivalent to H1 / rootTitle) —
+    // we skip it because the caller already passes rootTitle separately.
+    const h2 = line.match(/^(?:##|==)\s+(.+)$/);
+    const h3 = line.match(/^(?:###|===)\s+(.+)$/);
     if (h2) {
       flush();
       currentH2 = h2[1].trim();
@@ -44,6 +47,11 @@ export function chunkMarkdown(md: string, rootTitle: string): Chunk[] {
     buffer.push(line);
   }
   flush();
+
+  // Fallback: if nothing structural was found (no H2/H3 headings and only
+  // one giant buffered section), the document is still valid content — we
+  // just couldn't split it by section. Drop into paragraph-window chunking
+  // below so callers never silently get zero chunks from a non-empty doc.
 
   // Split oversized sections; merge undersized ones.
   const chunks: Chunk[] = [];

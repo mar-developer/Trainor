@@ -7,10 +7,12 @@ import { HandsOnSteps } from "@/components/hands-on-steps";
 import { SafetyAlert } from "@/components/safety-alert";
 import { ComponentExplorer } from "@/components/component-explorer";
 import { ChatCompanion } from "@/components/chat-companion";
+import { LessonBody } from "@/components/lesson-body";
 import {
-  getComponents,
+  getComponentsForModule,
+  getCourseForModule,
   getLessonForModule,
-  getPhaseOneModules,
+  getModulesForCourse,
 } from "@/lib/data/repo";
 import {
   isLessonComplete,
@@ -23,9 +25,12 @@ export default async function ModulePage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
+  const course = await getCourseForModule(slug);
+  const courseSlug = course?.slug ?? "arduino-electronics-trainer";
+
   const [modules, components, lesson] = await Promise.all([
-    getPhaseOneModules(),
-    getComponents(),
+    getModulesForCourse(courseSlug),
+    getComponentsForModule(slug),
     getLessonForModule(slug),
   ]);
 
@@ -49,11 +54,11 @@ export default async function ModulePage({
       <header className="sticky top-0 z-10 border-b bg-background/80 backdrop-blur">
         <div className="flex h-16 items-center gap-3 px-4 sm:px-6">
           <Link
-            href="/"
+            href={course ? `/courses/${course.slug}` : "/"}
             className={buttonVariants({ variant: "ghost", size: "sm" })}
           >
             <ArrowLeft className="size-4" />
-            Dashboard
+            {course?.title ?? "Dashboard"}
           </Link>
           <div className="ml-2 flex items-center gap-2 text-xs text-muted-foreground">
             <span className="font-mono">Module {module.number}</span>
@@ -101,15 +106,17 @@ export default async function ModulePage({
             <TabsTrigger value="handson" className="gap-2">
               <Wrench className="size-3.5" /> Hands-on
             </TabsTrigger>
-            <TabsTrigger value="components">Components</TabsTrigger>
+            {components.length > 0 && (
+              <TabsTrigger value="components" className="gap-2">
+                What you&apos;ll need ({components.length})
+              </TabsTrigger>
+            )}
           </TabsList>
 
           <TabsContent value="read" className="mt-4 space-y-5">
             {lesson ? (
               <>
-                <article className="whitespace-pre-wrap rounded-xl border bg-card p-5 text-sm leading-relaxed">
-                  {lesson.body}
-                </article>
+                <LessonBody body={lesson.body} />
 
                 {lesson.safety.length > 0 && (
                   <section className="space-y-2">
@@ -154,9 +161,15 @@ export default async function ModulePage({
             )}
           </TabsContent>
 
-          <TabsContent value="components" className="mt-4">
-            <ComponentExplorer components={components} />
-          </TabsContent>
+          {components.length > 0 && (
+            <TabsContent value="components" className="mt-4 space-y-2">
+              <p className="text-sm text-muted-foreground">
+                Just the parts and tools relevant to this module — pulled
+                straight from the lesson&apos;s required-component list.
+              </p>
+              <ComponentExplorer components={components} />
+            </TabsContent>
+          )}
         </Tabs>
 
         <nav className="flex items-center justify-between gap-3 border-t pt-6 text-sm">

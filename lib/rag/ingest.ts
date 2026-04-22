@@ -51,15 +51,16 @@ export async function ingestDocument(
     return { skipped: true, chunkCount: 0 };
   }
 
-  // Embed in batches.
+  // Embed in batches, with rate-limit-aware retry. Free-tier gateway keys
+  // hit 429s under load — we back off (45s, 90s, 180s) instead of failing
+  // the whole document run.
   const BATCH = 64;
   const allEmbeddings: number[][] = [];
   for (let i = 0; i < input.chunks.length; i += BATCH) {
     const batch = input.chunks.slice(i, i + BATCH);
-    const { embeddings } = await embedMany({
-      model: AI_MODELS.embedding,
-      values: batch.map((c) => c.content),
-    });
+    const embeddings = await embedManyWithRetry(
+      batch.map((c) => c.content),
+    );
     allEmbeddings.push(...embeddings);
   }
 
@@ -110,4 +111,36 @@ export async function ingestDocument(
   if (embedErr) throw embedErr;
 
   return { skipped: false, chunkCount: input.chunks.length };
+}
+
+// ─────────────────────────────────────────────────────────────
+// Rate-limit-aware wrapper around embedMany. Retries only on 429 /
+// rate_limit errors; lets real bugs bubble up immediately.
+// ─────────────────────────────────────────────────────────────
+async function embedManyWithRetry(
+  values: string[],
+  attempts = 3,
+  baseDelayMs = 45_000,
+): Promise<number[][]> {
+  let lastErr: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const { embeddings } = await embedMany({
+        model: AI_MODELS.embedding,
+        values,
+      });
+      return embeddings;
+    } catch (err) {
+      lastErr = err;
+      const msg = err instanceof Error ? err.message : String(err);
+      const isRateLimit = /rate[_ ]limit|429/i.test(msg);
+      if (!isRateLimit || i === attempts - 1) throw err;
+      const wait = baseDelayMs * (i + 1);
+      console.log(
+        `  ⏳ embed rate-limited — waiting ${wait / 1000}s before retry ${i + 1}/${attempts - 1}…`,
+      );
+      await new Promise((r) => setTimeout(r, wait));
+    }
+  }
+  throw lastErr;
 }

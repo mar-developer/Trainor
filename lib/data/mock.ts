@@ -2,14 +2,22 @@ import type { LucideIcon } from "lucide-react";
 import {
   Activity,
   Battery,
+  Bot,
+  Cable,
   CircuitBoard,
   Cpu,
   Gauge,
+  Grid3x3,
   Lightbulb,
+  Mic,
+  Microchip,
   Radio,
+  Ruler,
+  Speaker,
   Sparkles,
   ToggleLeft,
   Volume2,
+  Waypoints,
   Wrench,
   Zap,
 } from "lucide-react";
@@ -153,8 +161,89 @@ export const COMPONENTS: ComponentCard[] = [
     name: "74HC595",
     category: "ic",
     status: "remaining",
-    icon: Wrench,
+    icon: Microchip,
     blurb: "Shift register: 3 pins → 8 outputs.",
+  },
+  // Equipment / tooling that the hands-on lessons assume you have.
+  {
+    slug: "arduino-uno",
+    name: "Arduino Uno R3",
+    category: "board",
+    status: "done",
+    icon: CircuitBoard,
+    blurb: "ATmega328P · 14 digital pins (6 PWM), 6 analog · 5V logic.",
+  },
+  {
+    slug: "breadboard",
+    name: "Breadboard",
+    category: "board",
+    status: "done",
+    icon: Grid3x3,
+    blurb: "830-point layout. Columns vertical, rails horizontal.",
+  },
+  {
+    slug: "jumper-wires",
+    name: "Jumper wires",
+    category: "wire",
+    status: "done",
+    icon: Cable,
+    blurb: "M-M for breadboard, F-M for Arduino pins.",
+  },
+  {
+    slug: "multimeter",
+    name: "Multimeter",
+    category: "tool",
+    status: "done",
+    icon: Ruler,
+    blurb: "Resistance, voltage, current, continuity.",
+  },
+  {
+    slug: "esp32",
+    name: "ESP32 Dev Board",
+    category: "board",
+    status: "remaining",
+    icon: Cpu,
+    blurb: "WiFi + BT + dual-core 240 MHz. 3.3V logic.",
+  },
+  {
+    slug: "l293d",
+    name: "L293D H-bridge",
+    category: "ic",
+    status: "remaining",
+    icon: Zap,
+    blurb: "Motor driver. Direction + PWM speed for 2 DC motors.",
+  },
+  {
+    slug: "ultrasonic",
+    name: "HC-SR04 ultrasonic",
+    category: "sensor",
+    status: "remaining",
+    icon: Waypoints,
+    blurb: "Distance 2cm-4m via echo-time. Trigger + echo pins.",
+  },
+  {
+    slug: "robot-chassis",
+    name: "Robot chassis (2WD)",
+    category: "motor",
+    status: "remaining",
+    icon: Bot,
+    blurb: "Acrylic base + 2 geared motors + wheels + caster.",
+  },
+  {
+    slug: "i2s-mic",
+    name: "I2S microphone",
+    category: "sensor",
+    status: "remaining",
+    icon: Mic,
+    blurb: "INMP441 digital mic. 24-bit 16-48 kHz audio input.",
+  },
+  {
+    slug: "i2s-speaker",
+    name: "I2S DAC + speaker",
+    category: "sensor",
+    status: "remaining",
+    icon: Speaker,
+    blurb: "MAX98357A amp + 3W speaker. 3-wire I2S output.",
   },
 ];
 
@@ -264,6 +353,9 @@ export interface Experiment {
   title: string;
   observation: string;
   createdAt: string;
+  /** Hydrated from the DB when reading the global experiments feed. */
+  courseSlug?: string;
+  courseTitle?: string;
 }
 
 // From spec §403-431

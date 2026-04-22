@@ -61,11 +61,19 @@ export function formatContext(chunks: RetrievedChunk[]): string {
 }
 
 export function citationsFromChunks(chunks: RetrievedChunk[]) {
-  return chunks.map((c, i) => ({
-    index: i + 1,
-    source: c.title,
-    heading: c.headingPath ?? c.title,
-    chunkId: c.chunkId,
-    url: c.url,
-  }));
+  return chunks.map((c, i) => {
+    // Strip the document title from the heading path — the UI shows the
+    // title separately as the source label, so repeating it is noise.
+    let heading = c.headingPath ?? "";
+    const prefix = `${c.title} › `;
+    if (heading.startsWith(prefix)) heading = heading.slice(prefix.length);
+    if (heading === c.title) heading = "";
+    return {
+      index: i + 1,
+      source: c.title,
+      heading, // "" when the chunk is the document root — let the UI degrade
+      chunkId: c.chunkId,
+      url: c.url,
+    };
+  });
 }

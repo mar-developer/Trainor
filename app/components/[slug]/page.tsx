@@ -25,11 +25,11 @@ export default async function ComponentDetailPage({
     <div className="flex-1">
       <header className="flex h-16 items-center gap-3 border-b px-4 sm:px-6">
         <Link
-          href="/"
+          href="/courses/arduino-electronics-trainer"
           className={buttonVariants({ variant: "ghost", size: "sm" })}
         >
           <ArrowLeft className="size-4" />
-          Dashboard
+          Arduino Electronics Trainer
         </Link>
         <div className="ml-2 text-xs text-muted-foreground">
           <span className="font-mono">components</span>
