@@ -32,7 +32,10 @@ async function main() {
       `,
     );
   if (error) throw error;
-  const rows = (data ?? []) as Array<{
+  // PostgREST returns a single object for each many-to-one embed (lesson →
+  // module → phase → course), but the generated types widen to-one embeds to
+  // arrays. Cast through `unknown` to assert the real runtime shape.
+  const rows = (data ?? []) as unknown as Array<{
     id: string;
     title: string;
     body_md: string | null;

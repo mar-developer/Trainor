@@ -67,7 +67,7 @@ supabase/
   seed.sql             # deterministic curriculum seed
   config.toml
 docs/
-  arduino_trainer_spec.md   # canonical curriculum + RAG primary source (../docs/)
+  arduino_trainer_spec.md   # canonical curriculum + RAG primary source (../docs/) 
 ```
 
 ## Curriculum seed

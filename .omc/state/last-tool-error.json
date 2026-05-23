@@ -1,7 +1,7 @@
 {
-  "tool_name": "Bash",
-  "tool_input_preview": "{\"command\":\"cd \\\"C:/Users/Reymar/Documents/Programming/Personal/Trainor/web\\\" && curl -s -X POST http://localhost:3000/api/chat \\\\\\n  -H \\\"Content-Type: application/json\\\" \\\\\\n  -d '{\\\"messages\\\":[{\\\"...",
-  "error": "Exit code 1\nstatus=000\r\nnode:fs:449\r\n    return binding.readFileUtf8(path, stringToFlags(options.flag));\r\n                   ^\r\n\r\nError: ENOENT: no such file or directory, open 'C:\\Users\\Reymar\\Documents\\Programming\\Personal\\Trainor\\web\\.next\\_ref_probe.out'\r\n    at Object.readFileSync (node:fs:449:20)\r\n    at [eval]:2:27\r\n    at runScriptInThisContext (node:internal/vm:209:10)\r\n    at node:internal/process/execution:118:14\r\n    at [eval]-wrapper:6:24\r\n    at runScript (node:internal/process/exe...",
-  "timestamp": "2026-04-22T01:18:40.583Z",
+  "tool_name": "PowerShell",
+  "tool_input_preview": "{\"command\":\"\\\"--- resolve host.docker.internal on host ---\\\"; try { Resolve-DnsName host.docker.internal -ErrorAction Stop | Select-Object Name,IPAddress } catch { \\\"no DNS; checking hosts file\\\" }; S...",
+  "error": "EPERM: operation not permitted, uv_spawn 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'",
+  "timestamp": "2026-05-21T02:35:58.817Z",
   "retry_count": 1
 }

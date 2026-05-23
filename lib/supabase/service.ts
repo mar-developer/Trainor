@@ -10,7 +10,8 @@ let cached: SupabaseClient | null = null;
 
 export function createServiceClient(): SupabaseClient {
   if (cached) return cached;
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  // Server-only SUPABASE_URL wins (container → host); else the public URL.
+  const url = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) {
     throw new Error(

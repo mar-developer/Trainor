@@ -1,0 +1,24 @@
+# Keep the build context tiny + avoid leaking local-only files into the image.
+node_modules
+.next
+.git
+.gitignore
+npm-debug.log*
+
+# Local env / secrets — env is injected at build (ARG) and run time (compose).
+.env*
+
+# Tooling / docs that have no place in the runtime image
+Dockerfile
+.dockerignore
+docker-compose*.yml
+README.md
+*.md
+
+# Local Supabase stack (managed by the CLI, not baked into the app image)
+supabase
+
+# Editor / OS cruft
+.vscode
+.idea
+.DS_Store
