@@ -1,6 +1,6 @@
 import { embed } from "ai";
-import { createClient as createServiceClient } from "@supabase/supabase-js";
 import { AI_MODELS } from "@/lib/ai/gateway";
+import { database } from "@/lib/db";
 
 export interface RetrievedChunk {
   chunkId: string;
@@ -12,18 +12,6 @@ export interface RetrievedChunk {
   similarity: number;
 }
 
-// Retrieval is read-only against public tables — safe with the anon key.
-// We use a service client when NEXT_PUBLIC_SUPABASE_URL isn't set (build /
-// script contexts), but normally server code creates its own client.
-function supabase() {
-  return createServiceClient(
-    (process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL)!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY ??
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    { auth: { persistSession: false } },
-  );
-}
-
 export async function retrieveChunks(
   query: string,
   topK = 6,
@@ -33,11 +21,13 @@ export async function retrieveChunks(
     value: query,
   });
 
-  const { data, error } = await supabase().rpc("match_chunks", {
-    query_embedding: embedding,
-    match_count: topK,
-  });
-  if (error) throw error;
+  const matchCount = Math.max(1, Math.min(20, Math.trunc(topK)));
+  const data = await database()`
+    select * from public.match_chunks(
+      ${JSON.stringify(embedding)}::vector,
+      ${matchCount}
+    )
+  `;
 
   return (data ?? []).map((row: Record<string, unknown>) => ({
     chunkId: row.chunk_id as string,

@@ -1,11 +1,10 @@
-// Shared ingestion helper. Handles document checksum dedupe, batched
-// embedding, and upsert of chunks + vectors. Called by per-source scripts
-// (ingest-spec, ingest-arduino-docs, ingest-datasheets).
+// Shared ingestion helper. Handles checksum dedupe, embedding, and atomic
+// replacement of a document's chunks and vectors.
 
 import { createHash } from "node:crypto";
 import { embedMany } from "ai";
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { AI_MODELS } from "@/lib/ai/gateway";
+import { database } from "@/lib/db";
 import type { Chunk } from "@/lib/rag/chunk";
 
 export type IngestSource =
@@ -19,128 +18,110 @@ export interface IngestInput {
   source: IngestSource;
   title: string;
   url?: string;
-  /** Raw content used to compute a checksum for incremental dedupe. */
   raw: string;
   chunks: Chunk[];
 }
 
-export function supabaseFromEnv(): SupabaseClient {
-  const url = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !serviceKey) {
-    throw new Error(
-      "Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in .env.local",
-    );
-  }
-  return createClient(url, serviceKey, { auth: { persistSession: false } });
-}
-
 export async function ingestDocument(
-  supabase: SupabaseClient,
   input: IngestInput,
 ): Promise<{ skipped: boolean; chunkCount: number }> {
+  const sql = database();
   const checksum = createHash("sha256").update(input.raw).digest("hex");
-
-  // Dedupe key = (source, url) with a fallback of (source, title).
-  const query = supabase.from("documents").select("id, checksum").eq("source", input.source);
-  const { data: existing } = input.url
-    ? await query.eq("url", input.url).maybeSingle()
-    : await query.eq("title", input.title).maybeSingle();
+  const [existing] = (input.url
+    ? await sql`
+        select id, checksum from public.documents
+         where source = ${input.source} and url = ${input.url}
+         limit 1
+      `
+    : await sql`
+        select id, checksum from public.documents
+         where source = ${input.source} and title = ${input.title}
+         limit 1
+      `) as unknown as Array<{ id: string; checksum: string }>;
 
   if (existing?.checksum === checksum) {
     return { skipped: true, chunkCount: 0 };
   }
 
-  // Embed in batches, with rate-limit-aware retry. Free-tier gateway keys
-  // hit 429s under load — we back off (45s, 90s, 180s) instead of failing
-  // the whole document run.
-  const BATCH = 64;
   const allEmbeddings: number[][] = [];
-  for (let i = 0; i < input.chunks.length; i += BATCH) {
-    const batch = input.chunks.slice(i, i + BATCH);
-    const embeddings = await embedManyWithRetry(
-      batch.map((c) => c.content),
+  for (let index = 0; index < input.chunks.length; index += 64) {
+    const batch = input.chunks.slice(index, index + 64);
+    allEmbeddings.push(
+      ...(await embedManyWithRetry(batch.map((chunk) => chunk.content))),
     );
-    allEmbeddings.push(...embeddings);
   }
 
-  let documentId: string;
-  if (existing) {
-    const { error } = await supabase
-      .from("documents")
-      .update({ checksum, ingested_at: new Date().toISOString() })
-      .eq("id", existing.id);
-    if (error) throw error;
-    documentId = existing.id;
-    await supabase.from("chunks").delete().eq("document_id", documentId);
-  } else {
-    const { data, error } = await supabase
-      .from("documents")
-      .insert({
-        source: input.source,
-        title: input.title,
-        url: input.url ?? null,
-        checksum,
-      })
-      .select("id")
-      .single();
-    if (error) throw error;
-    documentId = data.id;
-  }
+  await sql.begin(async (transaction) => {
+    let documentId: string;
+    if (existing) {
+      await transaction`
+        update public.documents
+           set checksum = ${checksum}, ingested_at = now()
+         where id = ${existing.id}
+      `;
+      await transaction`
+        delete from public.chunks where document_id = ${existing.id}
+      `;
+      documentId = existing.id;
+    } else {
+      const [document] = await transaction`
+        insert into public.documents (source, title, url, checksum)
+        values (
+          ${input.source}, ${input.title}, ${input.url ?? null}, ${checksum}
+        )
+        returning id
+      `;
+      documentId = document.id as string;
+    }
 
-  const chunkRows = input.chunks.map((c) => ({
-    document_id: documentId,
-    content: c.content,
-    token_count: c.tokenCount,
-    heading_path: c.headingPath,
-  }));
-
-  const { data: insertedChunks, error: chunkErr } = await supabase
-    .from("chunks")
-    .insert(chunkRows)
-    .select("id");
-  if (chunkErr) throw chunkErr;
-
-  const embedRows = insertedChunks!.map((c, i) => ({
-    chunk_id: c.id,
-    embedding: allEmbeddings[i],
-  }));
-  const { error: embedErr } = await supabase
-    .from("embeddings")
-    .insert(embedRows);
-  if (embedErr) throw embedErr;
+    for (let index = 0; index < input.chunks.length; index++) {
+      const chunk = input.chunks[index];
+      const [inserted] = await transaction`
+        insert into public.chunks
+          (document_id, content, token_count, heading_path)
+        values (
+          ${documentId}, ${chunk.content}, ${chunk.tokenCount},
+          ${chunk.headingPath}
+        )
+        returning id
+      `;
+      await transaction`
+        insert into public.embeddings (chunk_id, embedding)
+        values (
+          ${inserted.id as string},
+          ${JSON.stringify(allEmbeddings[index])}::vector
+        )
+      `;
+    }
+  });
 
   return { skipped: false, chunkCount: input.chunks.length };
 }
 
-// ─────────────────────────────────────────────────────────────
-// Rate-limit-aware wrapper around embedMany. Retries only on 429 /
-// rate_limit errors; lets real bugs bubble up immediately.
-// ─────────────────────────────────────────────────────────────
 async function embedManyWithRetry(
   values: string[],
   attempts = 3,
   baseDelayMs = 45_000,
 ): Promise<number[][]> {
-  let lastErr: unknown;
-  for (let i = 0; i < attempts; i++) {
+  let lastError: unknown;
+  for (let index = 0; index < attempts; index++) {
     try {
       const { embeddings } = await embedMany({
         model: AI_MODELS.embedding,
         values,
       });
       return embeddings;
-    } catch (err) {
-      lastErr = err;
-      const msg = err instanceof Error ? err.message : String(err);
-      const isRateLimit = /rate[_ ]limit|429/i.test(msg);
-      if (!isRateLimit || i === attempts - 1) throw err;
-      const wait = baseDelayMs * (i + 1);
+    } catch (error) {
+      lastError = error;
+      const message = error instanceof Error ? error.message : String(error);
+      const rateLimited = /rate[_ ]limit|429/i.test(message);
+      if (!rateLimited || index === attempts - 1) throw error;
+      const wait = baseDelayMs * (index + 1);
       console.log(
-        `  ⏳ embed rate-limited — waiting ${wait / 1000}s before retry ${i + 1}/${attempts - 1}…`,
+        `  ⏳ embed rate-limited — waiting ${wait / 1000}s before retry ${index + 1}/${attempts - 1}…`,
       );
-      await new Promise((r) => setTimeout(r, wait));
+      await new Promise((resolve) => setTimeout(resolve, wait));
     }
   }
-  throw lastErr;
+  throw lastError;
 }

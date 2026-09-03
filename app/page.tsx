@@ -7,6 +7,8 @@ import { ChatCompanion } from "@/components/chat-companion";
 import { getCourses, getExperiments } from "@/lib/data/repo";
 import type { CourseSummary } from "@/lib/data/repo";
 
+export const dynamic = "force-dynamic";
+
 export default async function DashboardPage() {
   const [courses, experiments] = await Promise.all([
     getCourses(),

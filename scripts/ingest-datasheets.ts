@@ -12,7 +12,7 @@ loadEnv({ path: ".env", override: false });
 import { readdir, readFile } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 import { chunkMarkdown } from "../lib/rag/chunk";
-import { ingestDocument, supabaseFromEnv } from "../lib/rag/ingest";
+import { ingestDocument } from "../lib/rag/ingest";
 
 const DATASHEET_DIR = resolve(process.cwd(), "./datasheets");
 
@@ -59,7 +59,6 @@ async function main() {
     return;
   }
 
-  const supabase = supabaseFromEnv();
   let ok = 0;
   let skipped = 0;
 
@@ -76,7 +75,7 @@ async function main() {
         continue;
       }
 
-      const result = await ingestDocument(supabase, {
+      const result = await ingestDocument({
         source: "datasheet",
         title,
         url: `local:./datasheets/${file}`,

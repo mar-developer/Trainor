@@ -1,13 +1,10 @@
 "use server";
 
 // Progress server actions: toggleStep + saveStepReport.
-// Writes go through the service-role client so they bypass RLS — safe in
-// single-user mode because we always scope by DEFAULT_USER_ID on the server.
-// When real auth ships, switch to the session client and let RLS enforce.
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { createServiceClient } from "@/lib/supabase/service";
+import { database } from "@/lib/db";
 import { getCurrentUserId } from "@/lib/auth";
 
 const toggleSchema = z.object({
@@ -20,25 +17,22 @@ const toggleSchema = z.object({
 export async function toggleStepComplete(input: z.infer<typeof toggleSchema>) {
   const { lessonId, stepId, moduleSlug, done } = toggleSchema.parse(input);
   const userId = await getCurrentUserId();
-  const supabase = createServiceClient();
+  const sql = database();
 
   if (done) {
-    const { error } = await supabase.from("progress").upsert(
-      {
-        user_id: userId,
-        lesson_id: lessonId,
-        step_id: stepId,
-        completed_at: new Date().toISOString(),
-      },
-      { onConflict: "user_id,lesson_id,step_id" },
-    );
-    if (error) throw error;
+    await sql`
+      insert into public.progress (user_id, lesson_id, step_id, completed_at)
+      values (${userId}, ${lessonId}, ${stepId}, now())
+      on conflict (user_id, lesson_id, step_id)
+      do update set completed_at = excluded.completed_at
+    `;
   } else {
-    const { error } = await supabase
-      .from("progress")
-      .delete()
-      .match({ user_id: userId, lesson_id: lessonId, step_id: stepId });
-    if (error) throw error;
+    await sql`
+      delete from public.progress
+       where user_id = ${userId}
+         and lesson_id = ${lessonId}
+         and step_id = ${stepId}
+    `;
   }
 
   revalidatePath(`/modules/${moduleSlug}`);
@@ -55,21 +49,19 @@ const reportSchema = z.object({
 export async function saveStepReport(input: z.infer<typeof reportSchema>) {
   const { lessonId, stepId, moduleSlug, text } = reportSchema.parse(input);
   const userId = await getCurrentUserId();
-  const supabase = createServiceClient();
+  const sql = database();
 
   // Logging a reading implicitly marks the step complete — matches the
   // spec's "report what you measured" UX pattern (arduino_trainer_spec.md §6).
-  const { error } = await supabase.from("progress").upsert(
-    {
-      user_id: userId,
-      lesson_id: lessonId,
-      step_id: stepId,
-      completed_at: new Date().toISOString(),
-      self_report: { text },
-    },
-    { onConflict: "user_id,lesson_id,step_id" },
-  );
-  if (error) throw error;
+  await sql`
+    insert into public.progress
+      (user_id, lesson_id, step_id, completed_at, self_report)
+    values (${userId}, ${lessonId}, ${stepId}, now(), ${sql.json({ text })})
+    on conflict (user_id, lesson_id, step_id)
+    do update set
+      completed_at = excluded.completed_at,
+      self_report = excluded.self_report
+  `;
 
   revalidatePath(`/modules/${moduleSlug}`);
   revalidatePath("/");

@@ -1,48 +1,24 @@
-# Runs the Next.js app container against your LOCAL `supabase start` stack.
+# Runs the Next.js app container with DATABASE_URL from .env.local.
 #
 #   npm run app:up      # build (first time) + start, detached
 #   npm run app:down    # stop + remove the container
 #
-# Precondition: `npm run db:start` is running (this attaches to its network).
 services:
   web:
     build:
       context: .
-      # Baked into the BROWSER bundle — must be what the browser (on the host)
-      # uses. The anon key defaults to the well-known local demo key; override
-      # via shell env or a .env file for cloud builds.
-      args:
-        NEXT_PUBLIC_SUPABASE_URL: http://127.0.0.1:54321
-        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY:-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0}
     image: trainor-web
     container_name: trainor_web
     # Host port is configurable so the container can coexist with a local
     # `next dev` on 3000. Override with WEB_PORT (e.g. WEB_PORT=3001 npm run app:up).
     ports:
       - "${WEB_PORT:-3000}:3000"
-    # Runtime secrets/keys come from .env.local (service role, AI keys, etc.).
+    # Runtime secrets/keys come from .env.local.
     env_file:
       - .env.local
-    environment:
-      # NEXT_PUBLIC_SUPABASE_URL is baked into the bundle at build time and used
-      # by the BROWSER (on the host) → stays 127.0.0.1:54321 (see build args).
-      # SERVER-side code reads SUPABASE_URL at runtime and must reach the host's
-      # Supabase from inside the container → use the host gateway.
-      SUPABASE_URL: http://host.docker.internal:54321
-    # Lets the container resolve the host on Linux too (Docker Desktop adds it).
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    networks:
-      - supabase
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 20s
-
-# The network created by `supabase start` for this project.
-networks:
-  supabase:
-    name: supabase_network_web
-    external: true

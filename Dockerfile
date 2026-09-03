@@ -1,8 +1,7 @@
 # syntax=docker/dockerfile:1
 #
 # Multi-stage production image for the Next.js app, built on standalone output.
-# Pairs with docker-compose.yml, which wires the container to the local
-# `supabase start` stack. See `output: "standalone"` in next.config.ts.
+# Pairs with docker-compose.yml. See `output: "standalone"` in next.config.ts.
 
 # ---- Base ---------------------------------------------------------------
 # Node 24 LTS on Alpine. libc6-compat covers native addons that expect glibc.
@@ -21,14 +20,6 @@ FROM base AS builder
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-# NEXT_PUBLIC_* are inlined into the BROWSER bundle at build time, so they must
-# be the URL/keys the browser (running on the host) will use — i.e. the
-# host-mapped Supabase port. Server-side code re-reads these from the runtime
-# env (overridden in compose), so the same names resolve differently at runtime.
-ARG NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321
-ARG NEXT_PUBLIC_SUPABASE_ANON_KEY
-ENV NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL
-ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY
 ENV NEXT_TELEMETRY_DISABLED=1
 
 RUN npm run build

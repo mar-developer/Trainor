@@ -8,42 +8,28 @@ loadEnv({ path: ".env.local" });
 loadEnv({ path: ".env", override: false });
 
 import { chunkMarkdown } from "../lib/rag/chunk";
-import { ingestDocument, supabaseFromEnv } from "../lib/rag/ingest";
+import { database } from "../lib/db";
+import { ingestDocument } from "../lib/rag/ingest";
 
 async function main() {
-  const supabase = supabaseFromEnv();
-
   // Pull every lesson joined up to its module + course so we can build
   // friendly document titles.
-  const { data, error } = await supabase
-    .from("lessons")
-    .select(
-      `
-        id,
-        title,
-        body_md,
-        modules!inner (
-          number,
-          title,
-          phases!inner (
-            courses!inner ( slug, title )
-          )
-        )
-      `,
-    );
-  if (error) throw error;
-  // PostgREST returns a single object for each many-to-one embed (lesson →
-  // module → phase → course), but the generated types widen to-one embeds to
-  // arrays. Cast through `unknown` to assert the real runtime shape.
-  const rows = (data ?? []) as unknown as Array<{
+  const rows = (await database()`
+    select l.id, l.title, l.body_md,
+           m.number as module_number, m.title as module_title,
+           c.slug as course_slug
+      from public.lessons l
+      join public.modules m on m.id = l.module_id
+      join public.phases p on p.id = m.phase_id
+      join public.courses c on c.id = p.course_id
+     order by p."order", m."order", l."order"
+  `) as unknown as Array<{
     id: string;
     title: string;
     body_md: string | null;
-    modules: {
-      number: string;
-      title: string;
-      phases: { courses: { slug: string; title: string } };
-    };
+    module_number: string;
+    module_title: string;
+    course_slug: string;
   }>;
 
   console.log(`Found ${rows.length} lessons to ingest.`);
@@ -60,9 +46,7 @@ async function main() {
       continue;
     }
 
-    const module = row.modules;
-    const course = module.phases.courses;
-    const title = `${module.number} · ${module.title}`;
+    const title = `${row.module_number} · ${row.module_title}`;
 
     const chunks = chunkMarkdown(body, title);
     if (!chunks.length) {
@@ -72,12 +56,12 @@ async function main() {
 
     try {
       const result = await retryOnRateLimit(() =>
-        ingestDocument(supabase, {
+        ingestDocument({
           source: "spec",
           title,
           // Use lesson id in the URL so each lesson is a unique document in
           // the checksum-dedup table (independent from the legacy spec file).
-          url: `lesson://${course.slug}/${row.id}`,
+          url: `lesson://${row.course_slug}/${row.id}`,
           raw: body,
           chunks,
         }),
@@ -139,13 +123,6 @@ async function retryOnRateLimit<T>(
     }
   }
   throw new Error("unreachable");
-}
-
-function titleToSlug(s: string) {
-  return s
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
 }
 
 main().catch((err) => {

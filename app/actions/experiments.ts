@@ -3,7 +3,7 @@
 // Experiment CRUD actions for the logged experiments page.
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { createServiceClient } from "@/lib/supabase/service";
+import { database } from "@/lib/db";
 import { getCurrentUserId } from "@/lib/auth";
 
 const createSchema = z.object({
@@ -18,25 +18,17 @@ export type CreateExperimentInput = z.infer<typeof createSchema>;
 export async function createExperiment(input: CreateExperimentInput) {
   const parsed = createSchema.parse(input);
   const userId = await getCurrentUserId();
-  const supabase = createServiceClient();
-
-  // Resolve course slug → id.
-  const { data: course, error: courseErr } = await supabase
-    .from("courses")
-    .select("id")
-    .eq("slug", parsed.courseSlug)
-    .maybeSingle();
-  if (courseErr) throw courseErr;
-  if (!course) throw new Error(`Unknown course: ${parsed.courseSlug}`);
-
-  const { error } = await supabase.from("experiments").insert({
-    user_id: userId,
-    course_id: course.id,
-    title: parsed.title,
-    circuit_description: parsed.circuitDescription ?? null,
-    observation: parsed.observation,
-  });
-  if (error) throw error;
+  const rows = await database()`
+    insert into public.experiments
+      (user_id, course_id, title, circuit_description, observation)
+    select
+      ${userId}, id, ${parsed.title},
+      ${parsed.circuitDescription ?? null}, ${parsed.observation}
+      from public.courses
+     where slug = ${parsed.courseSlug}
+    returning id
+  `;
+  if (!rows.length) throw new Error(`Unknown course: ${parsed.courseSlug}`);
 
   revalidatePath("/experiments");
   revalidatePath(`/courses/${parsed.courseSlug}`);

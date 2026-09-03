@@ -1,9 +1,7 @@
-// Unified read API. Tries Supabase when env is configured, falls back to the
-// typed mock data in ./mock so the app still renders locally without a DB.
-// All functions are server-side (await cookies() inside the Supabase client).
+// Unified server-side read API. Uses Neon when DATABASE_URL is configured and
+// falls back to typed mock data so the app still renders before setup.
 
-import { createClient } from "@/lib/supabase/server";
-import { createServiceClient } from "@/lib/supabase/service";
+import { database, isDatabaseConfigured } from "@/lib/db";
 import { getCurrentUserId } from "@/lib/auth";
 import {
   COMPONENTS,
@@ -27,36 +25,68 @@ export type {
   Module,
 };
 
-function isSupabaseConfigured() {
-  return Boolean(
-    process.env.NEXT_PUBLIC_SUPABASE_URL &&
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-  );
+type DbModule = {
+  slug: string;
+  number: string;
+  title: string;
+  kind: Module["kind"];
+  status: string;
+  estimated_minutes: number;
+  summary: string | null;
+};
+
+function dbModuleToMock(row: DbModule): Module {
+  return {
+    slug: row.slug,
+    number: row.number,
+    title: row.title,
+    kind: row.kind,
+    status:
+      row.status === "not_started"
+        ? "not-started"
+        : row.status === "in_progress"
+          ? "in-progress"
+          : (row.status as Module["status"]),
+    estimatedMinutes: row.estimated_minutes ?? 20,
+    summary: row.summary ?? "",
+  };
 }
 
-// ─── Modules ──────────────────────────────────────────────────────────
-export async function getModulesForCourse(courseSlug: string): Promise<Module[]> {
-  if (!isSupabaseConfigured()) return PHASE_ONE_MODULES;
+function mockCourses(): CourseSummary[] {
+  const modules = PHASE_ONE_MODULES;
+  const complete = modules.filter((module) => module.status === "complete").length;
+  const next =
+    modules.find((module) => module.status === "in-progress") ??
+    modules.find((module) => module.status !== "complete") ??
+    null;
+  return [{
+    slug: "arduino-electronics-trainer",
+    title: "Arduino Electronics Trainer",
+    description:
+      "Zero-to-IoT curriculum for web developers. Learn electronics from scratch with hands-on, measurement-driven tutorials.",
+    moduleCount: modules.length,
+    completeCount: complete,
+    percent: Math.round((complete / modules.length) * 100),
+    continueModule: next,
+    currentPhaseLabel: next ? "Phase 1 · Foundations" : null,
+  }];
+}
 
+export async function getModulesForCourse(courseSlug: string): Promise<Module[]> {
+  if (!isDatabaseConfigured()) return PHASE_ONE_MODULES;
   try {
-    const supabase = await createClient();
-    const { data, error } = await supabase
-      .from("modules")
-      .select(
-        `
-          slug, number, title, kind, status, estimated_minutes, summary,
-          phases!inner ( "order", courses!inner ( slug ) )
-        `,
-      )
-      .eq("phases.courses.slug", courseSlug);
-    if (error || !data) throw error ?? new Error("no data");
-    return data
-      .map(dbModuleToMock)
-      .sort((a, b) =>
-        a.number.localeCompare(b.number, undefined, { numeric: true }),
-      );
-  } catch (err) {
-    console.warn("[repo] getModulesForCourse falling back to mock:", err);
+    const rows = (await database()`
+      select m.slug, m.number, m.title, m.kind, m.status,
+             m.estimated_minutes, m.summary
+        from public.modules m
+        join public.phases p on p.id = m.phase_id
+        join public.courses c on c.id = p.course_id
+       where c.slug = ${courseSlug}
+       order by p."order", m."order"
+    `) as unknown as DbModule[];
+    return rows.map(dbModuleToMock);
+  } catch (error) {
+    console.warn("[repo] getModulesForCourse falling back to mock:", error);
     return PHASE_ONE_MODULES;
   }
 }
@@ -67,82 +97,40 @@ export async function getPhaseOneModules(): Promise<Module[]> {
 }
 
 export async function getModuleBySlug(slug: string): Promise<Module | null> {
-  if (!isSupabaseConfigured()) {
-    return PHASE_ONE_MODULES.find((m) => m.slug === slug) ?? null;
+  if (!isDatabaseConfigured()) {
+    return PHASE_ONE_MODULES.find((module) => module.slug === slug) ?? null;
   }
-
   try {
-    const supabase = await createClient();
-    const { data, error } = await supabase
-      .from("modules")
-      .select("slug, number, title, kind, status, estimated_minutes, summary")
-      .eq("slug", slug)
-      .maybeSingle();
-    if (error) throw error;
-    if (!data) return null;
-    return dbModuleToMock(data);
-  } catch (err) {
-    console.warn("[repo] getModuleBySlug falling back to mock:", err);
-    return PHASE_ONE_MODULES.find((m) => m.slug === slug) ?? null;
+    const [row] = (await database()`
+      select slug, number, title, kind, status, estimated_minutes, summary
+        from public.modules
+       where slug = ${slug}
+       limit 1
+    `) as unknown as DbModule[];
+    return row ? dbModuleToMock(row) : null;
+  } catch (error) {
+    console.warn("[repo] getModuleBySlug falling back to mock:", error);
+    return PHASE_ONE_MODULES.find((module) => module.slug === slug) ?? null;
   }
 }
 
-function dbModuleToMock(row: Record<string, unknown>): Module {
-  const statusRaw = row.status as string;
-  return {
-    slug: row.slug as string,
-    number: row.number as string,
-    title: row.title as string,
-    kind: row.kind as Module["kind"],
-    // DB uses snake_case enum; mock uses kebab-case strings.
-    status:
-      statusRaw === "not_started"
-        ? "not-started"
-        : statusRaw === "in_progress"
-          ? "in-progress"
-          : (statusRaw as Module["status"]),
-    estimatedMinutes: (row.estimated_minutes as number) ?? 20,
-    summary: (row.summary as string) ?? "",
-  };
-}
+type DbComponent = {
+  slug: string;
+  name: string;
+  category: ComponentCategory;
+  blurb: string;
+  status: string;
+};
 
-// ─── Components ───────────────────────────────────────────────────────
 export async function getComponents(): Promise<ComponentCard[]> {
-  if (!isSupabaseConfigured()) return COMPONENTS;
-
+  if (!isDatabaseConfigured()) return COMPONENTS;
   try {
-    const supabase = await createClient();
-    const { data, error } = await supabase
-      .from("components")
-      .select("slug, name, category, blurb, status");
-    if (error || !data) throw error ?? new Error("no data");
-
-    // Merge with mock to preserve icon mapping — icons live in the client bundle.
-    // Mock also defines the intended display order; we sort by it below.
-    const iconBySlug = new Map(COMPONENTS.map((c) => [c.slug, c.icon]));
-    const orderBySlug = new Map(COMPONENTS.map((c, i) => [c.slug, i]));
-
-    return data
-      .map<ComponentCard>((row) => ({
-        slug: row.slug as string,
-        name: row.name as string,
-        category: row.category as ComponentCategory,
-        blurb: row.blurb as string,
-        status:
-          row.status === "complete"
-            ? "done"
-            : row.status === "not_started"
-              ? "remaining"
-              : "locked",
-        icon: iconBySlug.get(row.slug as string) ?? COMPONENTS[0].icon,
-      }))
-      .sort((a, b) => {
-        const ao = orderBySlug.get(a.slug) ?? 99;
-        const bo = orderBySlug.get(b.slug) ?? 99;
-        return ao - bo;
-      });
-  } catch (err) {
-    console.warn("[repo] getComponents falling back to mock:", err);
+    const rows = (await database()`
+      select slug, name, category, blurb, status from public.components
+    `) as unknown as DbComponent[];
+    return mapComponents(rows);
+  } catch (error) {
+    console.warn("[repo] getComponents falling back to mock:", error);
     return COMPONENTS;
   }
 }
@@ -151,324 +139,222 @@ export async function getComponentBySlug(
   slug: string,
 ): Promise<ComponentCard | null> {
   const all = await getComponents();
-  return all.find((c) => c.slug === slug) ?? null;
+  return all.find((component) => component.slug === slug) ?? null;
 }
 
-/**
- * Components/equipment a specific module actually uses. Returns [] when
- * the lesson has no mapping seeded yet. Ordering comes from
- * `lesson_components.order` so we can list equipment first, parts second.
- */
 export async function getComponentsForModule(
   moduleSlug: string,
 ): Promise<ComponentCard[]> {
-  if (!isSupabaseConfigured()) return COMPONENTS;
+  if (!isDatabaseConfigured()) return COMPONENTS;
   try {
-    const supabase = await createClient();
-    const { data, error } = await supabase
-      .from("lesson_components")
-      .select(
-        `
-          "order",
-          components!inner ( slug, name, category, blurb, status ),
-          lessons!inner ( modules!inner ( slug ) )
-        `,
-      )
-      .eq("lessons.modules.slug", moduleSlug);
-    if (error || !data) throw error ?? new Error("no data");
-
-    const iconBySlug = new Map(COMPONENTS.map((c) => [c.slug, c.icon]));
-    return data
-      .slice()
-      .sort(
-        (a, b) =>
-          ((a.order as number) ?? 0) - ((b.order as number) ?? 0),
-      )
-      .map((row) => {
-        const c = row.components as {
-          slug: string;
-          name: string;
-          category: ComponentCategory;
-          blurb: string;
-          status: string;
-        };
-        return {
-          slug: c.slug,
-          name: c.name,
-          category: c.category,
-          blurb: c.blurb,
-          status:
-            c.status === "complete"
-              ? "done"
-              : c.status === "not_started"
-                ? "remaining"
-                : "locked",
-          icon: iconBySlug.get(c.slug) ?? COMPONENTS[0].icon,
-        } satisfies ComponentCard;
-      });
-  } catch (err) {
-    console.warn("[repo] getComponentsForModule failed:", err);
+    const rows = (await database()`
+      select c.slug, c.name, c.category, c.blurb, c.status
+        from public.lesson_components lc
+        join public.components c on c.slug = lc.component_slug
+        join public.lessons l on l.id = lc.lesson_id
+        join public.modules m on m.id = l.module_id
+       where m.slug = ${moduleSlug}
+       order by lc."order"
+    `) as unknown as DbComponent[];
+    return mapComponents(rows, false);
+  } catch (error) {
+    console.warn("[repo] getComponentsForModule failed:", error);
     return [];
   }
 }
 
-// ─── Lesson (by module slug) ──────────────────────────────────────────
+function mapComponents(rows: DbComponent[], sortByMock = true): ComponentCard[] {
+  const iconBySlug = new Map(COMPONENTS.map((component) => [component.slug, component.icon]));
+  const orderBySlug = new Map(COMPONENTS.map((component, index) => [component.slug, index]));
+  const mapped = rows.map<ComponentCard>((row) => ({
+    slug: row.slug,
+    name: row.name,
+    category: row.category,
+    blurb: row.blurb,
+    status:
+      row.status === "complete"
+        ? "done"
+        : row.status === "not_started"
+          ? "remaining"
+          : "locked",
+    icon: iconBySlug.get(row.slug) ?? COMPONENTS[0].icon,
+  }));
+  return sortByMock
+    ? mapped.sort(
+        (a, b) => (orderBySlug.get(a.slug) ?? 99) - (orderBySlug.get(b.slug) ?? 99),
+      )
+    : mapped;
+}
+
+type DbStep = {
+  id: string;
+  order: number;
+  instruction: string;
+  expected_measurement: string | null;
+  completed_at: Date | string | null;
+  self_report: string | null;
+};
+
 export async function getLessonForModule(
   moduleSlug: string,
 ): Promise<(LessonContent & { lessonId?: string }) | null> {
-  if (!isSupabaseConfigured()) return LESSONS[moduleSlug] ?? null;
-
+  if (!isDatabaseConfigured()) return LESSONS[moduleSlug] ?? null;
   try {
-    const supabase = await createClient();
-    const { data: lessons, error } = await supabase
-      .from("lessons")
-      .select(
-        `
-          id,
-          title,
-          body_md,
-          modules!inner (slug),
-          hands_on_steps!hands_on_steps_lesson_id_fkey ( id, "order", instruction, expected_measurement ),
-          lesson_safety ( "order", kind, message )
-        `,
-      )
-      .eq("modules.slug", moduleSlug)
-      .limit(1)
-      .maybeSingle();
+    const sql = database();
+    const [lesson] = (await sql`
+      select l.id, l.title, l.body_md
+        from public.lessons l
+        join public.modules m on m.id = l.module_id
+       where m.slug = ${moduleSlug}
+       order by l."order"
+       limit 1
+    `) as unknown as Array<{ id: string; title: string; body_md: string | null }>;
+    if (!lesson) return null;
 
-    if (error) throw error;
-    if (!lessons) return null;
-
-    const row = lessons as {
-      id: string;
-      title: string;
-      body_md: string | null;
-      hands_on_steps: Array<{
-        id: string;
-        order: number;
-        instruction: string;
-        expected_measurement: string | null;
-      }>;
-      lesson_safety: Array<{
-        order: number;
+    const userId = await getCurrentUserId();
+    const [stepRows, safetyRows] = await Promise.all([
+      sql`
+        select s.id, s."order", s.instruction, s.expected_measurement,
+               p.completed_at, p.self_report ->> 'text' as self_report
+          from public.hands_on_steps s
+          left join public.progress p
+            on p.step_id = s.id
+           and p.lesson_id = s.lesson_id
+           and p.user_id = ${userId}
+         where s.lesson_id = ${lesson.id}
+         order by s."order"
+      `,
+      sql`
+        select "order", kind, message
+          from public.lesson_safety
+         where lesson_id = ${lesson.id}
+         order by "order"
+      `,
+    ]);
+    const steps = (stepRows as unknown as DbStep[]).map<HandsOnStep>((step) => ({
+      id: step.id,
+      order: step.order,
+      instruction: step.instruction,
+      expected: step.expected_measurement ?? undefined,
+      completedAt:
+        step.completed_at instanceof Date
+          ? step.completed_at.toISOString()
+          : step.completed_at,
+      selfReport: step.self_report,
+    }));
+    return {
+      lessonId: lesson.id,
+      moduleSlug,
+      title: lesson.title,
+      body: lesson.body_md ?? "",
+      handsOn: steps,
+      safety: (safetyRows as unknown as Array<{
         kind: "danger" | "caution" | "info";
         message: string;
-      }>;
+      }>).map(({ kind, message }) => ({ kind, message })),
     };
-
-    const steps: HandsOnStep[] = (row.hands_on_steps ?? [])
-      .slice()
-      .sort((a, b) => a.order - b.order)
-      .map((s) => ({
-        id: s.id,
-        order: s.order,
-        instruction: s.instruction,
-        expected: s.expected_measurement ?? undefined,
-      }));
-
-    // Hydrate progress for each step (single user mode).
-    // Uses the service-role client to bypass RLS — same trust model as the
-    // server actions that write these rows. Flip to supabase.auth.getUser()
-    // when real Supabase Auth ships.
-    const userId = await getCurrentUserId();
-    const stepIds = steps.map((s) => s.id).filter((id): id is string => Boolean(id));
-    if (stepIds.length) {
-      const admin = createServiceClient();
-      const { data: progRows } = await admin
-        .from("progress")
-        .select("step_id, completed_at, self_report")
-        .eq("user_id", userId)
-        .in("step_id", stepIds);
-      const byStep = new Map(
-        (progRows ?? []).map((r) => [
-          r.step_id as string,
-          r as { completed_at: string; self_report: { text?: string } | null },
-        ]),
-      );
-      steps.forEach((s) => {
-        const p = s.id ? byStep.get(s.id) : undefined;
-        s.completedAt = p?.completed_at ?? null;
-        s.selfReport = p?.self_report?.text ?? null;
-      });
-    }
-
-    return {
-      lessonId: row.id,
-      moduleSlug,
-      title: row.title,
-      body: row.body_md ?? "",
-      handsOn: steps,
-      safety: (row.lesson_safety ?? [])
-        .slice()
-        .sort((a, b) => a.order - b.order)
-        .map((s) => ({ kind: s.kind, message: s.message })),
-    };
-  } catch (err) {
-    console.warn("[repo] getLessonForModule falling back to mock:", err);
+  } catch (error) {
+    console.warn("[repo] getLessonForModule falling back to mock:", error);
     return LESSONS[moduleSlug] ?? null;
   }
 }
 
-// ─── Lesson progress summary (for completion badges / auto-advance) ──
 export async function getModuleProgressSummary(
   moduleSlug: string,
 ): Promise<{ totalSteps: number; completedStepOrders: number[] }> {
-  if (!isSupabaseConfigured()) return { totalSteps: 0, completedStepOrders: [] };
-
+  if (!isDatabaseConfigured()) return { totalSteps: 0, completedStepOrders: [] };
   try {
-    const supabase = await createClient();
-    const admin = createServiceClient();
     const userId = await getCurrentUserId();
-
-    // First fetch the lesson's steps (anon client is fine for curriculum).
-    const { data: lesson } = await supabase
-      .from("lessons")
-      .select(
-        `
-          id,
-          hands_on_steps!hands_on_steps_lesson_id_fkey ( id, "order" ),
-          modules!inner (slug)
-        `,
-      )
-      .eq("modules.slug", moduleSlug)
-      .maybeSingle();
-
-    if (!lesson) return { totalSteps: 0, completedStepOrders: [] };
-    const steps = (lesson as { hands_on_steps?: Array<{ id: string; order: number }> })
-      .hands_on_steps ?? [];
-    const stepIds = steps.map((s) => s.id);
-    if (!stepIds.length) return { totalSteps: 0, completedStepOrders: [] };
-
-    // Progress requires service client to bypass RLS in single-user mode.
-    const { data: done } = await admin
-      .from("progress")
-      .select("step_id")
-      .eq("user_id", userId)
-      .in("step_id", stepIds)
-      .not("completed_at", "is", null);
-
-    const doneSet = new Set((done ?? []).map((r) => r.step_id as string));
+    const rows = (await database()`
+      select s."order", p.completed_at is not null as complete
+        from public.hands_on_steps s
+        join public.lessons l on l.id = s.lesson_id
+        join public.modules m on m.id = l.module_id
+        left join public.progress p
+          on p.step_id = s.id
+         and p.lesson_id = s.lesson_id
+         and p.user_id = ${userId}
+       where m.slug = ${moduleSlug}
+       order by s."order"
+    `) as unknown as Array<{ order: number; complete: boolean }>;
     return {
-      totalSteps: steps.length,
-      completedStepOrders: steps
-        .filter((s) => doneSet.has(s.id))
-        .map((s) => s.order),
+      totalSteps: rows.length,
+      completedStepOrders: rows.filter((row) => row.complete).map((row) => row.order),
     };
-  } catch (err) {
-    console.warn("[repo] getModuleProgressSummary failed:", err);
+  } catch (error) {
+    console.warn("[repo] getModuleProgressSummary failed:", error);
     return { totalSteps: 0, completedStepOrders: [] };
   }
 }
 
-// ─── Courses (catalog + detail) ──────────────────────────────────────
 export interface CourseSummary {
   slug: string;
   title: string;
   description: string;
   moduleCount: number;
   completeCount: number;
-  /** Derived: rounded to 0–100. */
   percent: number;
-  /** Next module the learner should open. Null when everything is done. */
   continueModule: Module | null;
-  /** Short Phase N label for the current module, e.g. "Phase 1 · Foundations". */
   currentPhaseLabel: string | null;
 }
 
-/** Catalog used by the dashboard. One row per course row in public.courses. */
 export async function getCourses(): Promise<CourseSummary[]> {
-  if (!isSupabaseConfigured()) {
-    // Mock fallback: single Arduino card.
-    const modules = PHASE_ONE_MODULES;
-    const complete = modules.filter((m) => m.status === "complete").length;
-    const next =
-      modules.find((m) => m.status === "in-progress") ??
-      modules.find((m) => m.status !== "complete") ??
-      null;
-    return [
-      {
-        slug: "arduino-electronics-trainer",
-        title: "Arduino Electronics Trainer",
-        description:
-          "Zero-to-IoT curriculum for web developers. Learn electronics from scratch with hands-on, measurement-driven tutorials.",
-        moduleCount: modules.length,
-        completeCount: complete,
-        percent: Math.round((complete / modules.length) * 100),
-        continueModule: next,
-        currentPhaseLabel: next ? "Phase 1 · Foundations" : null,
-      },
-    ];
-  }
-
-  const supabase = await createClient();
-  const { data: courses, error } = await supabase
-    .from("courses")
-    .select("slug, title, description");
-  if (error || !courses) {
-    console.warn("[repo] getCourses falling back to mock:", error);
-    return getCourses.call(undefined); // retry with mock branch
-  }
-
-  const summaries = await Promise.all(
-    courses.map(async (c) => {
-      const modules = await getModulesForCourse(c.slug as string);
-      const complete = modules.filter((m) => m.status === "complete").length;
-      const next =
-        modules.find((m) => m.status === "in-progress") ??
-        modules.find((m) => m.status !== "complete") ??
-        null;
-
-      // Apply rule-b across modules — if the seeded in-progress module is
-      // actually complete via hands-on progress, advance past it.
-      let continueModule = next;
-      if (next) {
-        const prog = await getModuleProgressSummary(next.slug);
-        if (prog.totalSteps > 0 && isLessonCompleteFromProgress(prog)) {
-          const seededIdx = modules.findIndex((m) => m.slug === next.slug);
-          continueModule =
-            modules
-              .slice(seededIdx + 1)
-              .find((m) => m.status !== "complete") ?? next;
+  if (!isDatabaseConfigured()) return mockCourses();
+  try {
+    const courses = (await database()`
+      select slug, title, description from public.courses order by created_at
+    `) as unknown as Array<{ slug: string; title: string; description: string | null }>;
+    return Promise.all(
+      courses.map(async (course) => {
+        const modules = await getModulesForCourse(course.slug);
+        const complete = modules.filter((module) => module.status === "complete").length;
+        const next =
+          modules.find((module) => module.status === "in-progress") ??
+          modules.find((module) => module.status !== "complete") ??
+          null;
+        let continueModule = next;
+        if (next) {
+          const progress = await getModuleProgressSummary(next.slug);
+          if (progress.totalSteps > 0 && isLessonCompleteFromProgress(progress)) {
+            const index = modules.findIndex((module) => module.slug === next.slug);
+            continueModule =
+              modules.slice(index + 1).find((module) => module.status !== "complete") ?? next;
+          }
         }
-      }
-
-      const phaseLabel = await getPhaseLabelForModule(continueModule?.slug);
-      const moduleCount = modules.length;
-      return {
-        slug: c.slug as string,
-        title: c.title as string,
-        description: (c.description as string) ?? "",
-        moduleCount,
-        completeCount: complete,
-        percent: moduleCount
-          ? Math.round((complete / moduleCount) * 100)
-          : 0,
-        continueModule,
-        currentPhaseLabel: phaseLabel,
-      } satisfies CourseSummary;
-    }),
-  );
-
-  return summaries;
+        const moduleCount = modules.length;
+        return {
+          slug: course.slug,
+          title: course.title,
+          description: course.description ?? "",
+          moduleCount,
+          completeCount: complete,
+          percent: moduleCount ? Math.round((complete / moduleCount) * 100) : 0,
+          continueModule,
+          currentPhaseLabel: await getPhaseLabelForModule(continueModule?.slug),
+        } satisfies CourseSummary;
+      }),
+    );
+  } catch (error) {
+    console.warn("[repo] getCourses falling back to mock:", error);
+    return mockCourses();
+  }
 }
 
-/** The course a given module belongs to. Used for breadcrumb back-links. */
 export async function getCourseForModule(
   moduleSlug: string,
 ): Promise<{ slug: string; title: string } | null> {
-  if (!isSupabaseConfigured()) {
+  if (!isDatabaseConfigured()) {
     return { slug: "arduino-electronics-trainer", title: "Arduino Electronics Trainer" };
   }
   try {
-    const supabase = await createClient();
-    const { data } = await supabase
-      .from("modules")
-      .select(`phases ( courses ( slug, title ) )`)
-      .eq("slug", moduleSlug)
-      .maybeSingle();
-    const course = (data as {
-      phases?: { courses?: { slug: string; title: string } };
-    } | null)?.phases?.courses;
+    const [course] = (await database()`
+      select c.slug, c.title
+        from public.modules m
+        join public.phases p on p.id = m.phase_id
+        join public.courses c on c.id = p.course_id
+       where m.slug = ${moduleSlug}
+       limit 1
+    `) as unknown as Array<{ slug: string; title: string }>;
     return course ?? null;
   } catch {
     return null;
@@ -478,32 +364,25 @@ export async function getCourseForModule(
 export async function getCourseBySlug(
   slug: string,
 ): Promise<{ slug: string; title: string; description: string } | null> {
-  if (!isSupabaseConfigured()) {
-    if (slug === "arduino-electronics-trainer") {
-      return {
-        slug,
-        title: "Arduino Electronics Trainer",
-        description:
-          "Zero-to-IoT curriculum for web developers. Learn electronics from scratch with hands-on, measurement-driven tutorials.",
-      };
-    }
-    return null;
+  if (!isDatabaseConfigured()) {
+    return slug === "arduino-electronics-trainer"
+      ? {
+          slug,
+          title: "Arduino Electronics Trainer",
+          description:
+            "Zero-to-IoT curriculum for web developers. Learn electronics from scratch with hands-on, measurement-driven tutorials.",
+        }
+      : null;
   }
-  const supabase = await createClient();
-  const { data } = await supabase
-    .from("courses")
-    .select("slug, title, description")
-    .eq("slug", slug)
-    .maybeSingle();
-  if (!data) return null;
-  return {
-    slug: data.slug as string,
-    title: data.title as string,
-    description: (data.description as string) ?? "",
-  };
+  const [course] = (await database()`
+    select slug, title, coalesce(description, '') as description
+      from public.courses
+     where slug = ${slug}
+     limit 1
+  `) as unknown as Array<{ slug: string; title: string; description: string }>;
+  return course ?? null;
 }
 
-// ─── Curriculum outline (master-plan accordion) ──────────────────────
 export interface CurriculumPhase {
   id: string;
   order: number;
@@ -521,192 +400,206 @@ export interface CurriculumPhase {
   >;
 }
 
+type OutlineRow = {
+  phase_id: string;
+  phase_order: number;
+  phase_title: string;
+  module_id: string | null;
+  slug: string | null;
+  number: string | null;
+  title: string | null;
+  kind: Module["kind"] | null;
+  status: string | null;
+  estimated_minutes: number | null;
+  summary: string | null;
+  lesson_title: string | null;
+};
+
 export async function getCurriculumOutline(
   courseSlug: string,
 ): Promise<CurriculumPhase[]> {
-  if (!isSupabaseConfigured()) {
-    // Minimal mock: one phase with the 8 seeded modules.
-    return [
-      {
-        id: "phase-1",
-        order: 1,
-        title: "Foundations",
-        locked: false,
-        moduleCount: PHASE_ONE_MODULES.length,
-        completeCount: PHASE_ONE_MODULES.filter((m) => m.status === "complete")
-          .length,
-        modules: PHASE_ONE_MODULES.map((m) => ({
-          ...m,
-          lessonTitles: [],
-          complete: m.status === "complete",
-          totalSteps: 0,
-          completedSteps: 0,
-        })),
-      },
-    ];
+  if (!isDatabaseConfigured()) {
+    return [{
+      id: "phase-1",
+      order: 1,
+      title: "Foundations",
+      locked: false,
+      moduleCount: PHASE_ONE_MODULES.length,
+      completeCount: PHASE_ONE_MODULES.filter((module) => module.status === "complete").length,
+      modules: PHASE_ONE_MODULES.map((module) => ({
+        ...module,
+        lessonTitles: [],
+        complete: module.status === "complete",
+        totalSteps: 0,
+        completedSteps: 0,
+      })),
+    }];
   }
-
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("phases")
-    .select(
-      `
-        id, "order", title,
-        courses!inner ( slug ),
-        modules (
-          id, slug, number, title, kind, status, estimated_minutes, summary,
-          lessons ( title )
-        )
-      `,
-    )
-    .eq("courses.slug", courseSlug);
-
-  if (error || !data) {
+  try {
+    const rows = (await database()`
+      select p.id as phase_id, p."order" as phase_order, p.title as phase_title,
+             m.id as module_id, m.slug, m.number, m.title, m.kind, m.status,
+             m.estimated_minutes, m.summary, l.title as lesson_title
+        from public.phases p
+        join public.courses c on c.id = p.course_id
+        left join public.modules m on m.phase_id = p.id
+        left join public.lessons l on l.module_id = m.id
+       where c.slug = ${courseSlug}
+       order by p."order", m."order", l."order"
+    `) as unknown as OutlineRow[];
+    const phases = new Map<
+      string,
+      {
+        id: string;
+        order: number;
+        title: string;
+        modules: Map<string, { row: DbModule; lessons: string[] }>;
+      }
+    >();
+    for (const row of rows) {
+      const phase = phases.get(row.phase_id) ?? {
+        id: row.phase_id,
+        order: row.phase_order,
+        title: row.phase_title,
+        modules: new Map(),
+      };
+      phases.set(row.phase_id, phase);
+      if (!row.module_id || !row.slug || !row.number || !row.title || !row.kind || !row.status) continue;
+      const moduleEntry = phase.modules.get(row.module_id) ?? {
+        row: {
+          slug: row.slug,
+          number: row.number,
+          title: row.title,
+          kind: row.kind,
+          status: row.status,
+          estimated_minutes: row.estimated_minutes ?? 20,
+          summary: row.summary,
+        },
+        lessons: [],
+      };
+      phase.modules.set(row.module_id, moduleEntry);
+      if (row.lesson_title) moduleEntry.lessons.push(row.lesson_title);
+    }
+    const result: CurriculumPhase[] = [];
+    for (const phase of phases.values()) {
+      const enriched = await Promise.all(
+        [...phase.modules.values()].map(async ({ row, lessons }) => {
+          const moduleRow = dbModuleToMock(row);
+          const progress = await getModuleProgressSummary(moduleRow.slug);
+          const complete =
+            moduleRow.status === "complete" ||
+            (progress.totalSteps > 0 && isLessonCompleteFromProgress(progress));
+          return {
+            ...moduleRow,
+            lessonTitles: lessons,
+            complete,
+            totalSteps: progress.totalSteps,
+            completedSteps: progress.completedStepOrders.length,
+          };
+        }),
+      );
+      result.push({
+        id: phase.id,
+        order: phase.order,
+        title: phase.title,
+        locked:
+          enriched.length > 0 && enriched.every((item) => item.status === "not-started"),
+        moduleCount: enriched.length,
+        completeCount: enriched.filter((item) => item.complete).length,
+        modules: enriched,
+      });
+    }
+    return result;
+  } catch (error) {
     console.warn("[repo] getCurriculumOutline failed:", error);
     return [];
   }
-
-  // Fetch all progress summaries in parallel per module to decide ticks.
-  const phases = data
-    .slice()
-    .sort((a, b) => (a.order as number) - (b.order as number));
-  const result: CurriculumPhase[] = [];
-
-  for (const phase of phases) {
-    const mods = ((phase as unknown as { modules: Array<Record<string, unknown>> })
-      .modules ?? []) as Array<Record<string, unknown>>;
-    const enriched = await Promise.all(
-      mods
-        .slice()
-        .sort((a, b) => {
-          const an = String(a.number ?? "");
-          const bn = String(b.number ?? "");
-          return an.localeCompare(bn, undefined, { numeric: true });
-        })
-        .map(async (m) => {
-          const base = dbModuleToMock(m);
-          const prog = await getModuleProgressSummary(base.slug);
-          const lessons = (m.lessons as Array<{ title: string }> | null) ?? [];
-          const isComplete =
-            base.status === "complete" ||
-            (prog.totalSteps > 0 &&
-              isLessonCompleteFromProgress(prog));
-          return {
-            ...base,
-            lessonTitles: lessons.map((l) => l.title),
-            complete: isComplete,
-            totalSteps: prog.totalSteps,
-            completedSteps: prog.completedStepOrders.length,
-          };
-        }),
-    );
-
-    const completeCount = enriched.filter((m) => m.complete).length;
-    result.push({
-      id: phase.id as string,
-      order: phase.order as number,
-      title: phase.title as string,
-      locked:
-        enriched.length > 0 && enriched.every((m) => m.status === "not-started"),
-      moduleCount: enriched.length,
-      completeCount,
-      modules: enriched,
-    });
-  }
-  return result;
 }
 
-async function getPhaseLabelForModule(
-  moduleSlug?: string,
-): Promise<string | null> {
-  if (!moduleSlug || !isSupabaseConfigured()) return null;
+async function getPhaseLabelForModule(moduleSlug?: string): Promise<string | null> {
+  if (!moduleSlug || !isDatabaseConfigured()) return null;
   try {
-    const supabase = await createClient();
-    const { data } = await supabase
-      .from("modules")
-      .select(`phases ( "order", title )`)
-      .eq("slug", moduleSlug)
-      .maybeSingle();
-    const phase = (data as { phases?: { order: number; title: string } } | null)
-      ?.phases;
-    if (!phase) return null;
-    return `Phase ${phase.order} · ${phase.title}`;
+    const [phase] = (await database()`
+      select p."order", p.title
+        from public.modules m
+        join public.phases p on p.id = m.phase_id
+       where m.slug = ${moduleSlug}
+       limit 1
+    `) as unknown as Array<{ order: number; title: string }>;
+    return phase ? `Phase ${phase.order} · ${phase.title}` : null;
   } catch {
     return null;
   }
 }
 
-// Keep this helper inline to avoid circular imports with lib/progress.ts.
-function isLessonCompleteFromProgress(p: {
+function isLessonCompleteFromProgress(progress: {
   totalSteps: number;
   completedStepOrders: number[];
 }): boolean {
-  if (p.totalSteps === 0) return true;
-  return p.completedStepOrders.length / p.totalSteps >= 0.8;
+  if (progress.totalSteps === 0) return true;
+  return progress.completedStepOrders.length / progress.totalSteps >= 0.8;
 }
 
-// ─── Experiments (per-user) ──────────────────────────────────────────
-// Uses the service-role client (RLS bypass) because single-user mode has no
-// session. Scope-by-user is enforced explicitly with .eq('user_id', ...).
-export async function getExperiments(): Promise<Experiment[]> {
-  if (!isSupabaseConfigured()) return EXPERIMENTS;
+type ExperimentRow = {
+  id: string;
+  title: string;
+  observation: string | null;
+  created_at: Date | string;
+  course_slug: string | null;
+  course_title: string | null;
+};
 
+export async function getExperiments(): Promise<Experiment[]> {
+  if (!isDatabaseConfigured()) return EXPERIMENTS;
   try {
-    const admin = createServiceClient();
     const userId = await getCurrentUserId();
-    const { data, error } = await admin
-      .from("experiments")
-      .select(
-        `id, title, observation, created_at, courses ( slug, title )`,
-      )
-      .eq("user_id", userId)
-      .order("created_at", { ascending: false });
-    if (error) throw error;
-    if (!data || data.length === 0) return []; // empty state
-    return data.map((row) =>
-      dbExperimentToMock(row as Record<string, unknown>),
-    );
-  } catch (err) {
-    console.warn("[repo] getExperiments falling back to mock:", err);
+    return (await experimentRows(userId)).map(dbExperimentToMock);
+  } catch (error) {
+    console.warn("[repo] getExperiments falling back to mock:", error);
     return EXPERIMENTS;
   }
 }
 
-/** Course-scoped experiments for the course page feed. */
-export async function getExperimentsForCourse(
-  courseSlug: string,
-): Promise<Experiment[]> {
-  if (!isSupabaseConfigured()) return EXPERIMENTS;
+export async function getExperimentsForCourse(courseSlug: string): Promise<Experiment[]> {
+  if (!isDatabaseConfigured()) return EXPERIMENTS;
   try {
-    const admin = createServiceClient();
     const userId = await getCurrentUserId();
-    const { data, error } = await admin
-      .from("experiments")
-      .select(
-        `id, title, observation, created_at, courses!inner ( slug, title )`,
-      )
-      .eq("user_id", userId)
-      .eq("courses.slug", courseSlug)
-      .order("created_at", { ascending: false });
-    if (error) throw error;
-    if (!data) return [];
-    return data.map((row) =>
-      dbExperimentToMock(row as Record<string, unknown>),
-    );
-  } catch (err) {
-    console.warn("[repo] getExperimentsForCourse failed:", err);
+    return (await experimentRows(userId, courseSlug)).map(dbExperimentToMock);
+  } catch (error) {
+    console.warn("[repo] getExperimentsForCourse failed:", error);
     return [];
   }
 }
 
-function dbExperimentToMock(row: Record<string, unknown>): Experiment {
-  const course = row.courses as { slug?: string; title?: string } | null;
+async function experimentRows(userId: string, courseSlug?: string): Promise<ExperimentRow[]> {
+  const sql = database();
+  return (courseSlug
+    ? await sql`
+        select e.id, e.title, e.observation, e.created_at,
+               c.slug as course_slug, c.title as course_title
+          from public.experiments e
+          join public.courses c on c.id = e.course_id
+         where e.user_id = ${userId} and c.slug = ${courseSlug}
+         order by e.created_at desc
+      `
+    : await sql`
+        select e.id, e.title, e.observation, e.created_at,
+               c.slug as course_slug, c.title as course_title
+          from public.experiments e
+          left join public.courses c on c.id = e.course_id
+         where e.user_id = ${userId}
+         order by e.created_at desc
+      `) as unknown as ExperimentRow[];
+}
+
+function dbExperimentToMock(row: ExperimentRow): Experiment {
+  const createdAt = row.created_at instanceof Date ? row.created_at : new Date(row.created_at);
   return {
-    id: row.id as string,
-    title: row.title as string,
-    observation: (row.observation as string) ?? "",
-    createdAt: new Date(row.created_at as string).toISOString().slice(0, 10),
-    courseSlug: course?.slug,
-    courseTitle: course?.title,
+    id: row.id,
+    title: row.title,
+    observation: row.observation ?? "",
+    createdAt: createdAt.toISOString().slice(0, 10),
+    courseSlug: row.course_slug ?? undefined,
+    courseTitle: row.course_title ?? undefined,
   };
 }

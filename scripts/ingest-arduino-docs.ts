@@ -16,7 +16,7 @@ loadEnv({ path: ".env.local" });
 loadEnv({ path: ".env", override: false });
 
 import { chunkMarkdown } from "../lib/rag/chunk";
-import { ingestDocument, supabaseFromEnv } from "../lib/rag/ingest";
+import { ingestDocument } from "../lib/rag/ingest";
 
 const GH = "https://raw.githubusercontent.com/arduino/reference-en/master";
 
@@ -76,7 +76,6 @@ function adocToPlain(adoc: string): string {
 }
 
 async function main() {
-  const supabase = supabaseFromEnv();
   let ok = 0;
   let skipped = 0;
   let failed = 0;
@@ -103,7 +102,7 @@ async function main() {
         continue;
       }
 
-      const result = await ingestDocument(supabase, {
+      const result = await ingestDocument({
         source: "arduino_docs",
         title,
         url: `arduino-docs://${path}`,

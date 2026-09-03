@@ -6,7 +6,7 @@ loadEnv({ path: ".env.local" });
 loadEnv({ path: ".env", override: false });
 
 import { chunkMarkdown } from "../lib/rag/chunk";
-import { ingestDocument, supabaseFromEnv } from "../lib/rag/ingest";
+import { ingestDocument } from "../lib/rag/ingest";
 
 const SPEC_PATH = resolve(process.cwd(), "../docs/arduino_trainer_spec.md");
 // User-facing label for citations — the raw filename is an implementation
@@ -20,7 +20,7 @@ async function main() {
   const chunks = chunkMarkdown(md, TITLE);
   console.log(`Chunked into ${chunks.length} pieces`);
 
-  const result = await ingestDocument(supabaseFromEnv(), {
+  const result = await ingestDocument({
     source: "spec",
     title: TITLE,
     raw: md,
